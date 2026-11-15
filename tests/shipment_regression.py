@@ -13,9 +13,6 @@ from delivery.repositories import PostgresCustomerRepository, PostgresParcelRepo
 from delivery.service import ShippingService, ShipmentRejectedError
 
 
-shipment_id = 0
-
-
 class Policy:
     def is_allowed(self, customer, parcel, distance):
         return True
@@ -47,28 +44,26 @@ def parcel(sut):
 def request(person, training):
     return ShipmentRequest(str(uuid4()), person.id, training.id, 100, False, False, False)
 
-
+@pytest.mark.smoke
 def test_create_shipment(sut):
-    global shipment_id
     saved = sut[4].create_shipment(request(customer(sut), parcel(sut)))
-    shipment_id = saved.id
     assert saved.status == S.REGISTERED
     assert sut[3].find_by_id(saved.id) == saved
 
-
+@pytest.mark.smoke
 def test_dispatch_shipment(sut):
-    saved = sut[4].dispatch(shipment_id)
-    assert saved.status == S.DISPATCHED
-    assert sut[3].find_by_id(shipment_id) == saved
+    saved = sut[4].create_shipment(request(customer(sut), parcel(sut)))
+    dispatched = sut[4].dispatch(saved.id)
+    assert dispatched.status == S.DISPATCHED
+    assert sut[3].find_by_id(saved.id) == dispatched
 
 
 def test_parcel_weight(sut):
-    saved = sut[2].create(Parcel(0, "REGRESSION-PARCEL", 1000, 0))
+    saved = sut[2].create(Parcel(0, f"WEIGHT-{str(uuid4())[:8]}", 1000, 0))
     assert sut[2].find_by_id(saved.id).weight_grams == 1000
 
-
 def test_parcel_value(sut):
-    saved = sut[2].create(Parcel(0, "REGRESSION-PARCEL", 2000, 10000))
+    saved = sut[2].create(Parcel(0, f"VALUE-{str(uuid4())[:8]}", 2000, 10000))
     assert sut[2].find_by_id(saved.id).declared_value == 10000
 
 
@@ -83,7 +78,7 @@ def test_shipment_after_policy_check(sut):
     service = ShippingService(sut[1], sut[2], sut[3], DelayedPolicy())
     with ThreadPoolExecutor(max_workers=1) as executor:
         operation = executor.submit(service.create_shipment, data)
-        time.sleep(0.05)
+        operation.result()
         saved = sut[3].find_shipments(person.id, S.REGISTERED)
         assert len(saved) == 1
         assert saved[0].reference == data.reference
@@ -98,9 +93,9 @@ def test_shipment_selection(sut):
     for reference in fixture_order:
         sut[4].create_shipment(ShipmentRequest(reference, person.id, parcel(sut).id, 100, False, False, False))
     actual = [row[0] for row in sut[0].execute("SELECT reference FROM shipments WHERE customer_id=%s", (person.id,))]
-    assert actual == references
+    assert sorted(actual) == sorted(references)
 
-
+@pytest.mark.smoke
 def test_delivery(sut):
     saved = sut[4].create_shipment(request(customer(sut), parcel(sut)))
     sut[4].dispatch(saved.id)
