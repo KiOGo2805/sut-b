@@ -1,0 +1,126 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    name: Build Package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install build tools and dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+          pip install -e ".[test,regression]"
+
+      - name: Syntax check & Build wheel
+        run: |
+          python -m compileall delivery tests
+          python -m build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-packages
+          path: dist/
+
+  unit-tests:
+    name: Unit & Component Tests
+    runs-on: ubuntu-latest
+    needs: build
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: delivery_variant10_test
+          POSTGRES_USER: delivery_student
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_NAME: delivery_variant10_test
+      DB_USER: delivery_student
+      DB_PASSWORD: test_password
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+
+      - name: Apply database migrations
+        run: |
+          python -c "import psycopg; conn = psycopg.connect('host=localhost port=5432 dbname=delivery_variant10_test user=delivery_student password=test_password', autocommit=True); conn.execute(open('migrations/V1__create_tables.sql', encoding='utf-8').read())"
+
+      - name: Run unit/service/repository tests
+        run: |
+          pytest tests/test_environment.py tests/test_repositories.py tests/test_service.py --junitxml=reports/unit-report.xml -v
+
+      - name: Upload unit test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-report
+          path: reports/unit-report.xml
+
+  integration-api-tests:
+    name: Integration & API Tests
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[regression]"
+
+      - name: Run integration, API, and regression tests
+        run: |
+          pytest tests/test_integration.py tests/test_api.py tests/shipment_regression.py --junitxml=reports/integration-report.xml -v
+
+      - name: Upload integration test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-report
+          path: reports/integration-report.xml
