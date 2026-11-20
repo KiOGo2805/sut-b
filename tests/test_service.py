@@ -79,7 +79,7 @@ def test_create_shipment_with_discount_serviceState(db_connection):
         db_shipment = shipment_repo.find_by_id(shipment.id)
         assert db_shipment.base_fee == 8000
         assert db_shipment.adjustment == -1200
-        assert db_shipment.total == 68000
+        assert db_shipment.total == 6800
     finally:
         if 'shipment' in locals():
             shipment_repo.delete(shipment.id)
